@@ -11,6 +11,8 @@ import plotly.figure_factory as ff
 
 import time
 
+__debug = True 
+
 def timeit(method):
     def timed(*args, **kw):
         print("Start timing {} ...".format(method.__name__))
@@ -19,6 +21,8 @@ def timeit(method):
         te = time.time()
         print('%r  %2.2f ms' %(method.__name__, (te - ts) * 1000))
         return result
+    if not __debug:
+        return method
     return timed
 
 __exchanges = {}
@@ -102,7 +106,6 @@ def get_symbol_data_from_exchange(symbol, exchange, env):
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe) # since
         d = dict([(candle[0], candle[4]) for candle in ohlcv]) #(timestamp, close)
         df = pd.Series(list(d.values()), index=pd.to_datetime(list(d.keys()), unit='ms')) # convert epoch timestamp
-        print(df.head())
         df.to_pickle(cache_path)
         print('Cached {}-{} at {}'.format(exchange.id, symbol, cache_path))
     return df
@@ -191,7 +194,7 @@ if __name__ == "__main__":
     exchanges = [ccxt.binance().id]#, ccxt.coinmarketcap]
     res = get_price_data(['BTC/USDT'], exchanges, env={'cache_dir':cache_dir})
     df = res[ccxt.binance().id]
-    df_scatter(df, title="Bitcoin Prices USD")
+    #df_scatter(df, title="Bitcoin Prices USD")
     print(df.head())
     #symbols = [symbol for exch in exchanges for symbol in exch.symbols if symbol.split('/')[1].find('USD')!= -1]
 
