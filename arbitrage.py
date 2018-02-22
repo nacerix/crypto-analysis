@@ -9,14 +9,31 @@ import plotly.graph_objs as go
 import plotly.figure_factory as ff
 #py.init_notebook_mode(connected=True)
 
+import time
+
+def timeit(method):
+    def timed(*args, **kw):
+        print("Start timing {} ...".format(method.__name__))
+        ts = time.time()
+        result = method(*args, **kw)
+        te = time.time()
+        print('%r  %2.2f ms' %(method.__name__, (te - ts) * 1000))
+        return result
+    return timed
+
 __exchanges = {}
 
-def get_exchanges():
+@timeit
+def get_exchanges(exchanges=None):
     ''' Load available exchange '''
     if not __exchanges:
-        for exchange_id in ccxt.exchanges:
+        exchanges = exchanges or ccxt.exchanges
+        for exchange_id in exchanges:
             try:
-                exchange = getattr(ccxt, exchange_id)()
+                if type(exchange_id) == str:
+                    exchange = getattr(ccxt, exchange_id)()
+                else:
+                    exchange = exchange_id
                 __exchanges[exchange.id] = exchange
                 # Load markets
                 exchange.load_markets()
@@ -26,6 +43,7 @@ def get_exchanges():
     return __exchanges.copy()
 
 # get the current best price
+@timeit
 def get_current_best_price(exchange, symbols):
     res = {}
     for symbol in symbols:
@@ -37,48 +55,59 @@ def get_current_best_price(exchange, symbols):
         res[symbol] = sym
     return res 
 
-def get_arbitrage_symbols():
+@timeit
+def get_arbitrage_symbols(exchanges=None):
     # get all symbol from all exchanges available
-    all_symbols = [symbol for exchange in get_exchanges() for symbol in exchange.symbols]
+    exchanges = exchanges is None and get_exchanges() or exchanges
+    all_symbols = [symbol for exchange in exchanges for symbol in exchange.symbols]
 
     # get all unique symbols
     unique_symbols = list(set(all_symbols))
 
-    # filter out symbols that are not present on at least two exchanges
-    arbitrable_symbols = sorted([symbol for symbol in unique_symbols if all_symbols.count(symbol) > 1])
+    if len(exchanges) > 1:
+        # filter out symbols that are not present on at least two exchanges
+        arbitrable_symbols = sorted([symbol for symbol in unique_symbols if all_symbols.count(symbol) > 1])
+    else:
+        arbitrable_symbols = unique_symbols
     return arbitrable_symbols
 
-def get_price_data(symbols, timeframe, env):
+@timeit
+def get_price_data(symbols, exchanges=None, env={}):
     '''Download and cache dataseries'''
-    exchanges = get_exchanges()
-    cache_dir = env is None and "" or env.get("cache_dir", "")
+    exchanges = get_exchanges(exchanges)
     # get a list of ohlcv candles - each ohlcv candle is a list of [ timestamp, open, high, low, close, volume ]
     # use close price from each ohlcv candle
-    return dict([(_id, __get_data_from_exchange(_id, symbols, cache_dir, timeframe)) for _id in exchanges])
+    return dict([(exchange.id, get_data_from_exchange(symbols, exchange, env)) for exchange in exchanges.values()])
 
-def __get_data_from_exchange(exchange, symbols, cache_dir, timeframe):
+@timeit
+def get_data_from_exchange(symbols, exchange, env={}):
     df = None
     for symbol in symbols:
-        df_symbol = __get_symbol_data_from_exchange(exchange, symbol, cache_dir, timeframe)
-        df = df.join(df_symbol, how='outer')
+        df_symbol = get_symbol_data_from_exchange(symbol, exchange, env)
+        df = df and df.join(df_symbol, how='outer') or pd.DataFrame(df_symbol)
     return df
 
-def __get_symbol_data_from_exchange(exchange, symbol, cache_dir, timeframe):
+@timeit
+def get_symbol_data_from_exchange(symbol, exchange, env):
     '''Download and cache Quandl dataseries'''
-    cache_path = cache_dir+ '/' '{}-{}.pkl'.format(exchange.id, symbol).replace('/','-')
+    #TODO: provide an appropriate default for cache_dir
+    cache_path = env.get('cache_dir','')+ '/' + '{}-{}.pkl'.format(exchange.id, symbol).replace('/','-')
+    timeframe = env.get('timeframe','1d')
     try:
         f = open(cache_path, 'rb')
         df = pickle.load(f)
         print('Loaded {}-{} from cache'.format(exchange.id, symbol))
     except (OSError, IOError):
-        print('Downloading {}-{} from {}'.format(exchange.id, symbol, exchange.url))
+        print('Downloading {}-{} from {}'.format(exchange.id, symbol, exchange.urls.get('api' ,'')))
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe) # since
         d = dict([(candle[0], candle[4]) for candle in ohlcv]) #(timestamp, close)
-        df = pd.Series(d, index=pd.to_datetime(d.keys(), unit='ms')) # convert epoch timestamp
+        df = pd.Series(list(d.values()), index=pd.to_datetime(list(d.keys()), unit='ms')) # convert epoch timestamp
+        print(df.head())
         df.to_pickle(cache_path)
         print('Cached {}-{} at {}'.format(exchange.id, symbol, cache_path))
     return df
 
+@timeit
 def merge_dfs_on_column(dataframes, labels, col):
     '''Merge a single column of each dataframe into a new combined dataframe'''
     series_dict = {}
@@ -87,10 +116,12 @@ def merge_dfs_on_column(dataframes, labels, col):
         
     return pd.DataFrame(series_dict)
 
+@timeit
 def simple_scatter(x, y):
     btc_trace = go.Scatter(x, y)
     py.iplot([btc_trace])
 
+@timeit
 def df_scatter(df, title, seperate_y_axis=False, y_axis_label='', scale='linear', initial_hide=False):
     '''Generate a scatter plot of the entire dataframe'''
     label_arr = list(df)
@@ -135,6 +166,7 @@ def df_scatter(df, title, seperate_y_axis=False, y_axis_label='', scale='linear'
     fig = go.Figure(data=trace_arr, layout=layout)
     py.iplot(fig)
 
+@timeit
 def correlation_heatmap(df, title, absolute_bounds=True):
     '''Plot a correlation heatmap for the entire dataframe'''
     heatmap = go.Heatmap(
@@ -154,4 +186,20 @@ def correlation_heatmap(df, title, absolute_bounds=True):
     py.iplot(fig)
 
 if __name__ == "__main__":
-    print("Finished")
+    cache_dir="/Users/nacer/Documents/workspace/crypto-analysis/data"
+    # fetch bitcoin exchange rate from binance & coinmarketcap exchanges and plot them
+    exchanges = [ccxt.binance().id]#, ccxt.coinmarketcap]
+    res = get_price_data(['BTC/USDT'], exchanges, env={'cache_dir':cache_dir})
+    df = res[ccxt.binance().id]
+    df_scatter(df, title="Bitcoin Prices USD")
+    print(df.head())
+    #symbols = [symbol for exch in exchanges for symbol in exch.symbols if symbol.split('/')[1].find('USD')!= -1]
+
+    # fetch bitcoin exchange rate from all ccxt exchanges available and plot them
+    # calculate and plot an average price
+
+    # altcoins = ['ETH','LTC','XRP','ETC','STR','DASH','SC','XMR','XEM'] -> BTC
+    # fetch bitcoin, litecoin, ripple exchange rates from all ccxt exchanges available and plot them
+    # fetch bitcoin, litecoin, ripple exchange rates from binance & coinmarketcap exchanges and plot them
+
+    # Calculate the pearson correlation coefficients for altcoins in 2016/2017 and plot heatmap
