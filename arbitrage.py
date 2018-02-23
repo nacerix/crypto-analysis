@@ -16,11 +16,6 @@ import ccxt
 from ccxt.base.errors import NotSupported, AuthenticationError, ExchangeError
 import pickle
 
-import plotly.offline as py
-import plotly.graph_objs as go
-import plotly.figure_factory as ff
-#py.init_notebook_mode(connected=True)
-
 import time
 
 __debug = False 
@@ -200,85 +195,3 @@ def __merge_dfs_on_column(dataframes, labels, col):
         series_dict[labels[index]] = dataframes[index][col]
         
     return pd.DataFrame(series_dict)
-
-@timeit
-def simple_scatter(x, y):
-    btc_trace = go.Scatter(x, y)
-    py.iplot([btc_trace])
-
-@timeit
-def df_scatter(df, title, seperate_y_axis=False, y_axis_label='', scale='linear', initial_hide=False):
-    '''Generate a scatter plot of the entire dataframe'''
-    label_arr = list(df)
-    series_arr = list(map(lambda col: df[col], label_arr))
-    
-    layout = go.Layout(
-        title=title,
-        legend=dict(orientation="h"),
-        xaxis=dict(type='date'),
-        yaxis=dict(
-            title=y_axis_label,
-            showticklabels= not seperate_y_axis,
-            type=scale
-        )
-    )
-    
-    y_axis_config = dict(
-        overlaying='y',
-        showticklabels=False,
-        type=scale )
-    
-    visibility = 'visible'
-    if initial_hide:
-        visibility = 'legendonly'
-        
-    # Form Trace For Each Series
-    trace_arr = []
-    for index, series in enumerate(series_arr):
-        trace = go.Scatter(
-            x=series.index, 
-            y=series, 
-            name=label_arr[index],
-            visible=visibility
-        )
-        
-        # Add seperate axis for the series
-        if seperate_y_axis:
-            trace['yaxis'] = 'y{}'.format(index + 1)
-            layout['yaxis{}'.format(index + 1)] = y_axis_config    
-        trace_arr.append(trace)
-
-    fig = go.Figure(data=trace_arr, layout=layout)
-    py.iplot(fig)
-
-@timeit
-def correlation_heatmap(df, title, absolute_bounds=True):
-    '''Plot a correlation heatmap for the entire dataframe'''
-    heatmap = go.Heatmap(
-        z=df.corr(method='pearson').as_matrix(),
-        x=df.columns,
-        y=df.columns,
-        colorbar=dict(title='Pearson Coefficient'),
-    )
-    
-    layout = go.Layout(title=title)
-    
-    if absolute_bounds:
-        heatmap['zmax'] = 1.0
-        heatmap['zmin'] = -1.0
-        
-    fig = go.Figure(data=[heatmap], layout=layout)
-    py.iplot(fig)
-
-if __name__ == "__main__":
-    # This part is simply for illustration/test purposes
-
-    import os
-    cache_dir = os.path.dirname(os.path.abspath(__file__)) + '/data'
-
-    # fetch bitcoin exchange rate from binance & coinmarketcap exchanges and plot them
-    exchanges = ['binance', 'coinmarketcap', 'bittrex']
-    res = get_price_data(['BTC/USDT', 'LTC/BTC'], exchanges, env={'cache_dir':cache_dir})
-    for exch, df in res.items():
-        print("Exchange: {}".format(exch))
-        print(df.head())
