@@ -17,8 +17,18 @@ from ccxt.base.errors import NotSupported, AuthenticationError, ExchangeError
 import pickle
 
 import time
+import dateparser
 
-__debug = False 
+__debug = False
+__default_timeframe = '1d'
+
+def __date_parser(date_str, exchange):
+    dt = date_str and dateparser.parse(date_str)
+    if not dt:
+        dt = exchange.milliseconds()
+    else:
+        dt = exchange.parse8601(str(dt))
+    return dt
 
 def timeit(method):
     '''Decorator function to help identified bottleneck in the code'''
@@ -157,6 +167,11 @@ def get_price_data(symbols, exchanges=None, env={}):
 @timeit
 def __get_data_from_exchange(symbols, exchange, env={}):
     df = pd.DataFrame({})
+    if not exchange.has['fetchOHLCV']:
+        return df
+    elif exchange.has['fetchOHLCV'] == 'emulated':
+        #TODO: be cautious as the format might not be standard
+        pass
     for symbol in symbols:
         df_symbol = __get_symbol_data_from_exchange(symbol, exchange, env)
         if df_symbol is not None:
@@ -165,10 +180,11 @@ def __get_data_from_exchange(symbols, exchange, env={}):
 
 @timeit
 def __get_symbol_data_from_exchange(symbol, exchange, env):
-    '''Download and cache Quandl dataseries'''
+    '''Download and cache dataseries'''
     #TODO: provide an appropriate default for cache_dir
     cache_path = env.get('cache_dir','')+ '/' + '{}-{}.pkl'.format(exchange.id, symbol).replace('/','-')
-    timeframe = env.get('timeframe','1d')
+    #timeframe = env.get('timeframe', None) in exchange.timeframes and env.get('timeframe') or __default_timeframe
+    timeframe = env.get('timeframe', None) or __default_timeframe
     try:
         f = open(cache_path, 'rb')
         df = pickle.load(f)
@@ -176,7 +192,9 @@ def __get_symbol_data_from_exchange(symbol, exchange, env):
     except (OSError, IOError):
         try:
             __debug_print('Downloading {}-{} from {}'.format(exchange.id, symbol, exchange.urls.get('api' ,'')))
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe) # since
+            start_date = __date_parser(env.get('start_date', None), exchange)
+            end_date = __date_parser(env.get('end_date', None), exchange)
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=start_date, params={'endTime':end_date})
             d = dict([(candle[0], candle[-2]) for candle in ohlcv]) #(timestamp, close)
             df = pd.Series(list(d.values()), index=pd.to_datetime(list(d.keys()), unit='ms')) # convert epoch timestamp
             df.name = symbol
@@ -188,7 +206,7 @@ def __get_symbol_data_from_exchange(symbol, exchange, env):
     return df
 
 @timeit
-def __merge_dfs_on_column(dataframes, labels, col):
+def merge_dfs_on_column(dataframes, labels, col):
     '''Merge a single column of each dataframe into a new combined dataframe'''
     series_dict = {}
     for index in range(len(dataframes)):
