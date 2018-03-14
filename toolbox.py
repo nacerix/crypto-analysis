@@ -12,6 +12,7 @@ TODO: module examples
 '''
 
 import pandas as pd
+import numpy as np
 import ccxt
 from ccxt.base.errors import NotSupported, AuthenticationError, ExchangeError
 import pickle
@@ -67,7 +68,7 @@ def get_exchanges(exchanges=None):
     '''
     to_str = lambda x: type(x) == str and x or x.id
     exchanges = exchanges or ccxt.exchanges
-    exchanges = [exchange for exchange in exchanges if to_str(exchange) not in __exchanges]     
+    exchanges = [exchange for exchange in exchanges if to_str(exchange) not in __exchanges]   
     for exchange_id in exchanges:
         try:
             if type(exchange_id) == str:
@@ -213,3 +214,35 @@ def merge_dfs_on_column(dataframes, labels, col):
         series_dict[labels[index]] = dataframes[index][col]
         
     return pd.DataFrame(series_dict)
+
+@timeit
+def get_order_book(symbols, exchanges, env={}):
+    '''Download order book
+    '''
+    lexchanges = get_exchanges(exchanges)
+    limit = env.get('limit', 10)
+    data_type = np.dtype([('Price', '<f4'), ('Amount', '<f4')])
+    order_books = {}
+    for _,exchange in lexchanges.items():
+        order_books[exchange.id] = {}
+        for symbol in symbols:
+            try:
+                order_book = exchange.fetch_order_book(symbol, limit)
+                row_indexes = pd.MultiIndex.from_product([[order_book['datetime']], range(limit)])
+                col_indexes = pd.MultiIndex.from_product([['bids','asks'], ['Price', 'Amount']])
+                order_book_df = pd.DataFrame({}, index=row_indexes, columns=col_indexes)
+                ops = {
+                    'asks': np.array([tuple(x) for x in order_book['asks']], dtype=data_type),
+                    'bids': np.array([tuple(x) for x in order_book['bids']], dtype=data_type)
+                }
+                for op in ['bids','asks']:
+                    for cat in ['Price', 'Amount']:
+                        order_book_df[(op, cat)] = ops[op][cat]
+            except ccxt.ExchangeError: #ExchangeError: bitfinex No market symbol BTC/USDT
+                # fail silently if the exchange doesn't provide the requested symbol 
+                pass
+            except:
+                #TODO: do something
+                pass
+            order_books[exchange.id][symbol] = order_book_df
+    return order_books
