@@ -238,11 +238,11 @@ def get_order_book(symbols, exchanges, env={}):
                 for op in ['bids','asks']:
                     for cat in ['Price', 'Amount']:
                         order_book_df[(op, cat)] = ops[op][cat]
+                order_books[exchange.id][symbol] = order_book_df
             except ccxt.ExchangeError: #ExchangeError: bitfinex No market symbol BTC/USDT
                 # fail silently if the exchange doesn't provide the requested symbol 
                 pass
             except:
                 #TODO: do something
                 pass
-            order_books[exchange.id][symbol] = order_book_df
     return order_books
